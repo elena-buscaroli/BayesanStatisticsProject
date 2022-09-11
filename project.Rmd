@@ -1,7 +1,7 @@
 ---
 title: "Multi-lineage inference from vector integration sites in gene therapy essay"
 author: "Elena Buscaroli"
-date: "July 6, 2022"
+date: "September 12, 2022"
 output:
   html_document: default
 ---
@@ -25,6 +25,8 @@ library(tidyverse)
 -   [Stochastic Variational Inference (SVI)](#stochastic-variational-inference-svi)
     -   [Pyro implementation]
 -   [Results]
+    -   [Murine data]
+    -   [Experimental validation dataset]
 
 # Problem description
 
@@ -317,7 +319,7 @@ def guide():
 
 # Results
 
-## Data {#data-1}
+## Murine data {#data-1}
 
 Let's have a look at the distribution of the data at hand.
 
