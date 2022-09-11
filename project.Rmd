@@ -8,8 +8,7 @@ output:
 
 ```{r include=FALSE}
 library(lineaGT)
-library(tidyverse)
-# library(reticulate)
+library(tidyverse) 
 ```
 
 # Contents
@@ -156,6 +155,8 @@ $$
 
 Since we are dealing with count-based data, the first developed model was a Poisson mixture model. However, since the Poisson rate corresponds also to distribution variance, it was not possible to identify clones with high mean (i.e., high coverage) and low variance.
 
+<center>![](./images/pgm_pmm.png){width="242"}</center>
+
 ## Multivariate Normal mixture model
 
 We eventually developed and implemented a Multivariate Normal mixture model, in order to model the components variances and add model the correlation among dimensions.
@@ -185,6 +186,8 @@ Therefore, the learned parameters are:
 and each observation is assigned to the cluster maximising the posterior $$
 p(k|x_i) = \frac{\pi_k\mathcal{N}(x_i|k)}{\sum_{l=1}^K \pi_l \mathcal{N}(x_i|l)}.
 $$
+
+Eventually, to avoid an overestimation of the variances, we used the experimental validation dataset to fit a linear model of the variance as a function of the mean coverage. Then, the variances for each component, timepoint and lineage will be constrained to be smaller than the linear model in the estimated mean coverage.
 
 ## Prior distributions
 
@@ -318,106 +321,200 @@ def guide():
 
 Let's have a look at the distribution of the data at hand.
 
-```{r}
+```{r echo=FALSE, fig.height=5, fig.width=9}
 data %>% 
   filter_dataset() %>% 
   ggplot() +
   geom_histogram(aes(x=coverage), bins=60) +
-  facet_grid(timepoints~lineage) + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage")
+  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage")
 
 ```
 
-```{r}
-# x = lineaGT::fit(data %>% 
-#                    lineaGT::filter_dataset(min_cov=5), 
-#                  infer_growth=F, 
-#                  steps=500, 
-#                  covariance="full", 
+```{r eval=FALSE, include=FALSE}
+# x = lineaGT::fit(data %>%
+#                    lineaGT::filter_dataset(min_cov=5),
+#                  infer_growth=F,
+#                  steps=100,
+#                  covariance="full",
 #                  seed_optim=T,
 #                  timepoints_to_int=list("early"=60, "mid"=140, "late"=280),
-#                  store_grads=F, 
-#                  store_losses=F,
-#                  store_params=F)
+#                  store_grads=T,
+#                  store_losses=T)
+# saveRDS(x, "./x.Rds")
+```
 
+```{r}
 x = readRDS("./x.Rds")
 ```
 
-```{r}
+We can inspect the values of ELBO and norms of learned parameters' gradients to check for model convergence.
+
+First we check if for all the input $K$ the model converged. Each line corresponds to a different input number of clusters.
+
+Also, the actual number of iterations vary among $k$ since the model also checks for convergence at each step, looking at the degree to which the parameters vary in two consecutive steps.
+
+Since we want to minimize the loss, we can inspect the decreasing over iterations of the negative ELBO.
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+plot_losses(x, train = T)
+```
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+plot_gradient_norms(x)
+```
+
+We can inspect the Information Criteria varying the input number of clusters $K$.
+
+They are computed as follows
+
+-   $BIC = -2\text{log}\mathcal{L} + \text{log}N*n\_params$
+-   $AIC = -2\text{log}\mathcal{L} + 2n\_params$
+-   $ICL = BIC - \sum_{n=1}^N p(z_i)\text{log}(p(z_i))$
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+plot_IC(x) 
+```
+
+Eventually, we can inspect the clustering of our data and the estimated parameters.
+
+We can visualize the observations colored by assigned cluster, across lineages and timepoints.
+
+```{r echo=FALSE, fig.height=5, fig.width=9}
 x$cov.dataframe %>%   
   ggplot() +
   geom_histogram(aes(x=coverage, fill=labels), bins=100, position="identity", alpha=.6) +
-  facet_grid(timepoints~lineage) + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage") +
+  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage") +
   labs(fill="Clusters") + scale_fill_manual(values=x$color.palette)
 ```
 
-```{r warning=TRUE}
+We also can visualize the density of each component and dimension as estimated by the model, overlayed on the observations.
+
+Here, we see that generally, the model is able to estimated the correct mean $\mu$ and standard deviations $\sigma$, since the observed ISs are represented by the densities.
+
+```{r echo=FALSE, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
 plot_marginal(x)
 ```
 
-```{r warning=FALSE}
-x %>% plot_mullerplot()
+The estimated mean of each cluster corresponds to an estimate of the number of cells carrying the clusters' ISs. Thus, we can visualize how the mean parameter of each clone varies across lineages and timepoints to assess the expansion of the identified clone.
+
+```{r fig.height=3, fig.width=7, warning=FALSE}
+plot_mullerplot(x)
+```
+
+We can also visualize the 2D scatterplot to inspect the estimated full covariance matrices.
+
+```{r echo=FALSE}
+scatterplots = x %>% plot_scatter_density(highlight="C2")
+```
+
+```{r echo=FALSE, fig.height=3, fig.width=9}
+p1 = scatterplots$`cov.early.Myeloid:cov.mid.Myeloid`
+p2 = scatterplots$`cov.early.Myeloid:cov.late.Myeloid`
+p3 = scatterplots$`cov.late.Myeloid:cov.mid.Myeloid`
+
+patchwork::wrap_plots(p1, p2, p3, ncol=3)
+```
+
+## Experimental validation dataset
+
+```{r warning=FALSE, include=FALSE}
+cloneA = c("UTP15(+)_chr5:72866480(-)")
+
+cloneB = c("FARSB(-)_chr2:223461674(+)",
+           "VRK1(+)_chr14:97342533(+)",
+           "CREB1(+)_chr2:208325826(+)",
+           "LOC100507487(+)_chr4:129335149(+)")
+
+cloneC = c("TMEM64(-)_chr8:91674211(-)",
+           "LINC01477(+)_chr18:38162304(-)",
+           "GTF2A1(-)_chr14:81652945(-)",
+           "LTA4H(-)_chr12:96398298(-)",
+           "MIR3672(+)_chrX:120619080(-)",
+           "IMMP2L(-)_chr7:110789918(-)")
+
+cloneD = c("SUPT3H(-)_chr6:45172433(+)",
+           "TIMM44(-)_chr19:8002970(-)",
+           "GAK(-)_chr4:909971(-)",
+           "RPL27A(+)_chr11:8711542(-)",
+           "VANGL2(+)_chr1:160414727(-)",
+           "PDE5A(-)_chr4:120428505(-)",
+           "ADGRL3-AS1(-)_chr4:63782063(-)",
+           "IREB2(+)_chr15:78770928(-)",
+           "NCOA6(-)_chr20:33384442(+)",
+           "TNFRSF21(-)_chr6:47118860(-)",
+           "NUP210L(-)_chr1:154007969(-)"
+           )
+
+mixIS = list(A=cloneA,B=cloneB,C=cloneC,D=cloneD) %>%
+  reshape2::melt(value.name="IS") %>% dplyr::rename(cloneID=L1)
 ```
 
 ```{r}
-scatterplots = x %>% plot_scatter_density(highlight="C3")
+data.val = readRDS("./data.val.Rds")
+data.val %>% head()
+mixIS %>% head()  # true clones
 ```
 
-```{r}
-scatterplots$`cov.early.Myeloid:cov.mid.Myeloid`
-scatterplots$`cov.early.Myeloid:cov.late.Myeloid`
-scatterplots$`cov.mid.Myeloid:cov.late.T`
+```{r eval=FALSE, include=FALSE}
+# x.val = fit(cov.df=data.val %>% 
+#                  filter_dataset(min_cov=5, min_frac=0),
+#                steps=500,
+#                k_interval=c(2,10),
+#                infer_growth=F,
+#                default_lm=T
+#                )
+# saveRDS(x.val, "./x.val.Rds")
 ```
 
-```{r}
-## Posterior predictive checks
-
-# predictive = pyro.infer.Predictive(
-#     model,
-#     guide=guide,
-#     num_samples=10000,
-#     return_sites=['lkj']
-# )
-
+```{r echo=FALSE}
+x.val = readRDS("./x.val.Rds")
 ```
 
-# Inference with MCMC
+```{r echo=FALSE, fig.height=5, fig.width=6, message=FALSE, warning=FALSE}
+var_df = data.val %>% dplyr::group_by(timepoints, cloneID) %>%
+  filter(!IS %in% c("TNFRSF21(-)_chr6:47118860(-)","NUP210L(-)_chr1:154007969(-)")) %>% 
+  dplyr::summarise(mean = 1/dplyr::n() * sum(coverage),
+                   variance = sqrt( 1/dplyr::n() * sum( (coverage - mean)^2 ) ),
+                   ) %>%
+  tidyr::drop_na() %>%
+  filter(cloneID!="A")
 
-```{r}
-pyro = reticulate::import("pyro")
-torch = reticulate::import("torch")
-reticulate::source_python("./mcmc_model.py")
+# var_df %>%
+#   ggplot() +
+#   geom_point(aes(x=mean, y=variance, color=cloneID)) +
+#   lineaGT:::my_ggplot_theme() +
+#   ylab("Variance") + xlab("Mean coverage") +
+#   labs(title="Variance vs Mean coverage computed for each clone in each mix")
 
-pyro$set_rng_seed(as.integer(5))
 
-dataset = x$cov.dataframe %>% 
-  lineaGT:::long_to_wide_cov() %>% 
-  dplyr::select(dplyr::starts_with("cov")) %>% 
-  reticulate::r_to_py()
+regr_df = data.frame("x"=1:3000)
+l_model_B = lm(variance~mean, data=filter(var_df, cloneID=="B"))
+coef = coefficients(l_model_B)
+regr_df = regr_df %>%
+  dplyr::mutate(y_B=coef[2]*x + coef[1],
+                coef_B=list(coef))
 
-saveRDS(dataset, "./data.mcmc.Rds")
+l_model_C = lm(variance~mean, data=filter(var_df, cloneID=="C"))
+coef = coefficients(l_model_C)
+regr_df = regr_df %>%
+  dplyr::mutate(y_C=coef[2]*x + coef[1],
+                coef_C=list(coef))
 
-mcmc = run(K=x$K, dataset=dataset, n_chains=as.integer(4), n_samples=as.integer(300))
+l_model_D = lm(variance~mean, data=filter(var_df, cloneID=="D"))
+coef = coefficients(l_model_D)
+regr_df = regr_df %>%
+  dplyr::mutate(y_D=coef[2]*x + coef[1],
+                coef_D=list(coef))
 
-# kernel = pyro$infer$mcmc$NUTS(model)
-# 
-# mcmc = pyro$infer$mcmc$api$MCMC(kernel, 
-#                                 num_samples=as.integer(100), 
-#                                 num_chains=as.integer(1), 
-#                                 warmup_steps=as.integer(50))
-# 
-# mcmc$run(K=x$K, dataset=torch$tensor(dataset$values))
 
-# posterior_samples = mcmc$get_samples()
-# outs = posterior_samples["loc"]$t()
+regr_df %>%
+  ggplot() +
+  geom_line(aes(x=x, y=y_B)) +
+  geom_line(aes(x=x, y=y_C)) +
+  geom_line(aes(x=x, y=y_D)) +
+  geom_point(data=var_df, aes(x=mean, y=variance, color=cloneID)) +
+  lineaGT:::my_ggplot_theme() +
+  ylab("Estimated variance") + xlab("Mean coverage") +
+  labs(title="Linear regression of variances varying the mean coverage")
 
-# from pyro.infer.mcmc.api import MCMC
-# from pyro.infer.mcmc import NUTS
-# pyro.set_rng_seed(2)
-# kernel = NUTS(model)
-# mcmc = MCMC(kernel, num_samples=250, warmup_steps=50)
-# mcmc.run(data)
-# posterior_samples = mcmc.get_samples()
-# 
-# 
-# X, Y = posterior_samples["locs"].t()
 ```

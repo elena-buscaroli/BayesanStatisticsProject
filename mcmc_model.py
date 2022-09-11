@@ -31,11 +31,14 @@ def model(K, dataset):
 
     with pyro.plate("time_plate", T):
         with pyro.plate("comp_plate", K):
-            mean = pyro.sample("mean", distr.HalfNormal(mean_scale)).add(mean_loc)
+            mean = pyro.sample("mean", \
+                distr.Uniform(0, int(torch.max(dataset))))
+                # distr.Normal(mean_loc, mean_scale))
 
     with pyro.plate("time_plate2", T):
         with pyro.plate("comp_plate3", K):
-            sigma_vector = pyro.sample("sigma_vector", distr.HalfNormal(var_scale)).add(var_loc)  # sampling sigma, the sd
+            sigma_vector = pyro.sample("sigma_vector", \
+                distr.Normal(var_loc, var_scale))  # sampling sigma, the sd
 
     with pyro.plate("comp_plate2", K):
         sigma_chol = pyro.sample("sigma_chol", distr.LKJCholesky(T, eta))
@@ -46,7 +49,7 @@ def model(K, dataset):
         z = pyro.sample("z", distr.Categorical(weights), infer={"enumerate":"parallel"})
         x = pyro.sample("obs", distr.MultivariateNormal(loc=mean[z], \
             scale_tril=Sigma[z]), obs=dataset)
-            
+
 
 def compute_Sigma(sigma_chol, sigma_vector, K, T):
     '''
@@ -59,13 +62,11 @@ def compute_Sigma(sigma_chol, sigma_vector, K, T):
     return Sigma
 
 
-def run(K, dataset, model=model, n_samples=100, n_chains=1, warmup=50):
+def run_mcmc(K, dataset, model, n_samples=100, n_chains=1, warmup=50):
     kernel = pyro.infer.mcmc.NUTS(model)
 
-    mcmc = pyro.infer.mcmc.api.MCMC(kernel, 
-                                    num_samples=n_samples, 
-                                    num_chains=n_chains, 
-                                    warmup_steps=warmup)
+    mcmc = pyro.infer.mcmc.api.MCMC(kernel, num_samples=n_samples, \
+        num_chains=n_chains, warmup_steps=warmup)
     
     mcmc.run(K=K, dataset=torch.tensor(dataset.values))
     
