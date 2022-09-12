@@ -3,5 +3,4 @@ mcmc.ipynb
 mcmc_model.py
 data.mcmc.*
 
-data.val.Rds
-x.val.Rds
+
