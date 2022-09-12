@@ -27,7 +27,7 @@ library(tidyverse)
     -   [Pyro implementation]
 -   [Results]
     -   [Murine data](#data-1)
-        -   [Checking convergence]
+        -   [Model selection and convergence]
         -   [Evaluating clustering]
 
 # Problem description
@@ -151,8 +151,6 @@ $$
 
 We eventually developed and implemented a Multivariate Normal mixture model, in order to model the components variances and add model the correlation among dimensions.
 
-<center>![](./images/pgm.png){width="588"}</center>
-
 The model likelihood is
 
 $$
@@ -162,6 +160,8 @@ $$
 -   $\mathcal{N}(X|\mu_k, \Sigma_k)$ is the density of component $k$, charachterized by parameters $\mu_k, \Sigma_k$.
 
 -   $Z$ is a $N-$dimensional vector of latent clustering assignments such that $z_n \in {1,…,K}$.
+
+<center>![](./images/pgm.png){width="588"}</center>
 
 ### Latent parameters
 
@@ -229,7 +229,7 @@ data.val = readRDS("./data.val.Rds")
 
 ```{r echo=FALSE}
 # data.val %>% head() %>% knitr::kable()
-mixIS %>% head() %>% knitr::kable()  # true clones
+# mixIS %>% head() %>% knitr::kable()  # true clones
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -441,7 +441,22 @@ data %>%
 x = readRDS("./x.Rds")
 ```
 
-### Checking convergence
+### Model selection and convergence
+
+In order to select for the optimal number of clusters $K$, we run multiple models and select the one minimising an information criteria.
+
+We can inspect the IC varying the input number of clusters $K$. They are computed as follows
+
+-   $BIC = -2\text{log}\mathcal{L} + \text{log}N*n\_params$
+-   $AIC = -2\text{log}\mathcal{L} + 2n\_params$
+-   $ICL = BIC - \sum_{n=1}^N p(z_i)\text{log}(p(z_i))$, penalising the BIC with the entropy of assignment probabilities.
+
+In this case, we see the behaviour is quite similar among IC. 
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+plot_IC(x) 
+```
+
 
 We can inspect the values of ELBO and norms of learned parameters' gradients to check for model convergence.
 
@@ -459,18 +474,6 @@ design = "AAABBB
           ###BBB
           ###BBB"
 patchwork::wrap_plots(losses, grads, design = design)
-```
-
-We can inspect the Information Criteria varying the input number of clusters $K$.
-
-They are computed as follows
-
--   $BIC = -2\text{log}\mathcal{L} + \text{log}N*n\_params$
--   $AIC = -2\text{log}\mathcal{L} + 2n\_params$
--   $ICL = BIC - \sum_{n=1}^N p(z_i)\text{log}(p(z_i))$
-
-```{r echo=FALSE, fig.height=6, fig.width=8}
-plot_IC(x) 
 ```
 
 ### Evaluating clustering
@@ -497,7 +500,7 @@ plot_marginal(x)
 
 The estimated mean of each cluster corresponds to an estimate of the number of cells carrying the clusters' ISs. Thus, we can visualize how the mean parameter of each clone varies across lineages and timepoints to assess the expansion of the identified clone.
 
-```{r fig.height=3, fig.width=7, warning=FALSE}
+```{r echo=FALSE, fig.height=3, fig.width=7, warning=FALSE}
 plot_mullerplot(x)
 ```
 
