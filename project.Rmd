@@ -19,14 +19,16 @@ library(tidyverse)
 -   [Data](#data-1)
     -   [Experimental design]
     -   [Dataset]
--   [Model description]
-    -   [Poisson Mixture Model]
+-   [Model description] <!-- -   [Poisson Mixture Model] -->
     -   [Multivariate Normal Mixture Model]
+        -   [Latent parameters]
+        -   [Experimental validation dataset to model variances]
 -   [Stochastic Variational Inference (SVI)](#stochastic-variational-inference-svi)
     -   [Pyro implementation]
 -   [Results]
-    -   [Murine data]
-    -   [Experimental validation dataset]
+    -   [Murine data](#data-1)
+        -   [Checking convergence]
+        -   [Evaluating clustering]
 
 # Problem description
 
@@ -36,61 +38,57 @@ library(tidyverse)
 
 ## Gene therapy (GT) {#gene-therapy-gt}
 
-Gene therapy applications are employed to recover the functionality of a defective gene, causing a disease in the patient.
+Gene therapy applications are used to **recover the functionality of a defective gene**, causing a disease in the patient.
 
-Specifically, a viral vector is used to insert in the patient cells genome, the correct sequence of the defective gene, to restore its functionality.
+-   A viral vector is used to insert the correct gene sequence in the patient cells genome to restore its functionality.
 
-During cell replications, the cells with the "missing" gene will be replaced by the cells carrying the correct sequence. In particular, this is usually performed on Hematopoietic Stem Cells (HSCs), from which the different blood cell types originate.
+-   During cell replication, the cells with the *missing* gene will be replaced by the cells carrying the correct sequence.
 
-<center>![](./images/gene_therapy.png){width="477"}</center>
+-   This is usually performed on **Hematopoietic Stem Cells** (HSCs), from which the different blood cell types originate.
+
+<center>![](./images/gene_therapy.png){width="579"}</center>
 
 ## Possible problems in GT applications
 
 The lentiviral insertion occurs at semi-random in the genome and this might:
 
--   cause gene deregulation,
--   give rise to mutations leading to cancerous cell populations.
+-   cause **gene deregulation**,
+-   give rise to **mutations** leading to cancerous cell populations.
 
 Monitoring and studying such abnormalities over time in multiple lineages might help to improve the safety of GT applications.
 
-**AIM:** reconstruct clones (cell populations) originated from the same HSC to monitor their evolution over time and across lineages.
+**Aim of the project:** reconstruct clones (cell populations) originated from the same HSC to monitor their evolution over time and across lineages.
 
 # Data
 
 ## Experimental design
 
-**Insertion Site (IS)**: defined as a sequence (i.e., the sequence carried by the vector) inserted in a specific genomic position. Since insertion is "random", each IS is unique and acts as a *barcode*.
+-   **Insertion Site (IS)**: genomic sequence inserted in a specific genomic position. Since insertion is *random*, each IS is **unique** and acts as a *barcode*.
 
-**Locus coverage** (or *locus depth*): obtained from Next Generation Sequencing (NGS), corresponds to the number of fragments mapping to the locus (i.e. genomic position).
+-   **Next Generation Sequencing (NGS)**: DNA is fragmented and each fragment is sequenced and then mapped to the reference genome.
 
-a.  A set of HSCs is infected with lentiviral vectors carrying the same gene.
-
-    Each HSC will have the sequence carried by the vector in a "random" position of the genome, a unique insertion site $\rightarrow$ each cell is *barcoded*.
-
-    Each infected cell will carry more than one IS and each IS is unique.
-
-b.  The barcoded HSCs replicates and each descendant will carry the parent's ISs.
-
-    The HSCs will differentiate into three cell lineages.
-
-    Mutations might arise in one branch of the differentiation tree.
-
-c.  The genomic regions harbouring ISs are shredded into DNA fragments, which are sequenced to produce a set of sequencing reads.
-
-    In this setting, the coverage of an IS is proportional to its abundance in the sample.
+-   **Locus coverage** (or *locus depth*): number of fragments mapping to the locus (i.e. genomic position).
 
 <!-- ![](./images/experiment2.jpg){width="422"} -->
 
 <center>![](./images/experiment1.jpg){width="592"}</center>
 
+a.  HSCs are infected with lentiviral vectors carrying the same gene and thus ***barcoded*** **with a set of ISs**.
+
+b.  The barcoded HSCs replicates and **each descendant will carry the parent's ISs**.
+
+    The HSCs will differentiate into three cell lineages.
+
+c.  The regions with ISs are sequenced and the **coverage of an IS is proportional to its abundance in the sample**.
+
 To sum up:
 
--   *clone:* set of cells originated from the same HSC and sharing the parent HSC's ISs;
--   *coverage* of an IS $\propto$ *abundance* of the clone carrying it in the sample;
--   ISs with similar coverage will likely belongs to the same clone;
--   multiple cell populations are present in heterogeneus proportions in the samples.
+1.  *clone:* set of cells originated from the same HSC and sharing the parent HSC's ISs;
+2.  *coverage* of an IS $\propto$ *abundance* of the clone carrying it in the sample;
+3.  ISs with similar coverage will likely belongs to the same clone;
+4.  multiple cell populations are present in heterogeneus proportions in the samples.
 
-Therefore, to identify clones, we can cluster co-occurring ISs using their coverage over time and across lineages.
+**Therefore, to identify clones, we can cluster co-occurring ISs using their coverage over time and across lineages.**
 
 ## Dataset
 
@@ -102,31 +100,33 @@ The dataset is a $N ✕ D$ matrix
 
 Each entry $x_{n,d}$ of the matrix is the coverage of $n-$th IS in the $d-$th longitudinal sample.
 
-```{r}
+```{r include=FALSE}
 data = readRDS("data.Rds")
 ```
 
 This dataset contains `570` ISs.
 
-```{r}
+```{r echo=FALSE}
 data %>% lineaGT:::long_to_wide_cov() %>% nrow()
 ```
 
 It contains samples from three lineages.
 
-```{r}
+```{r echo=FALSE}
 data %>% dplyr::pull(lineage) %>% unique()
 ```
 
 It contains observations over three timepoints.
 
-```{r}
+```{r echo=FALSE}
 data %>% dplyr::pull(timepoints) %>% unique()
 ```
 
-```{r}
+```{r echo=FALSE}
 data %>% 
-  lineaGT:::long_to_wide_cov()
+  lineaGT:::long_to_wide_cov() %>% 
+  head() %>% 
+  knitr::kable()
 ```
 
 # Model description
@@ -139,25 +139,13 @@ $$
 p(X) = \sum^K_{k=1} \pi_k p(X|\theta_k).
 $$
 
-Each density $p(X|\theta_k)$ is a component of the mixture, charachterized by parameter $\theta_k$.
-
-The parameters $\pi_k$ are called *mixing coefficients* and are positive values such that $\sum_{k=1}^K \pi_k = 1$.
-
-In particular, the mixing proportions corresponds to the pior probability to pick a component, $p(k)=\pi_k$, and the densities $p(X|\theta_k)$ corresponds to the probability of $X$ conditioned on $k$.
-
-We assign a data point to a specific component $k$ according to the posterior distribution
-
-$$
-p(k|X) = \frac{p(k)p(X|k)}{\sum_l p(l)p(X|l)} = \frac{\pi_kp(X|k)}{\sum_l \pi_lp(X|l)}.
-$$
-
 ~[Bishop, C.M. (2006) 'Pattern recognition', Machine learning, 128(9). Available at: <https://www.academia.edu/download/30428242/bg0137.pdf>.]~
 
-## Poisson mixture model
+<!-- ## Poisson mixture model -->
 
-Since we are dealing with count-based data, the first developed model was a Poisson mixture model. However, since the Poisson rate corresponds also to distribution variance, it was not possible to identify clones with high mean (i.e., high coverage) and low variance.
+<!-- Since we are dealing with count-based data, the first developed model was a Poisson mixture model. However, since the Poisson rate corresponds also to distribution variance, it was not possible to identify clones with high mean (i.e., high coverage) and low variance. -->
 
-<center>![](./images/pgm_pmm.png){width="242"}</center>
+<!-- <center>![](./images/pgm_pmm.png){width="242"}</center> -->
 
 ## Multivariate Normal mixture model
 
@@ -165,259 +153,45 @@ We eventually developed and implemented a Multivariate Normal mixture model, in 
 
 <center>![](./images/pgm.png){width="588"}</center>
 
-$Z$ is a $N-$dimensional vector of cluster assignments such that $z_n \in {1,…,K}$ and $p(z_n=k)=\pi_k$.
-
 The model likelihood is
 
 $$
 p(X|Z,\pi,\mu,\Sigma) = \prod_{n=1}^N\sum_{k=1}^K\pi_k \mathcal{N}(x_n|\mu_k,\Sigma_k).
 $$
 
-The model estimates the full covariance matrix, to infer also the correlation among dimensions, and it is decomposed as $\Sigma = SCS$:
+-   $\mathcal{N}(X|\mu_k, \Sigma_k)$ is the density of component $k$, charachterized by parameters $\mu_k, \Sigma_k$.
 
--   $C$ is the correlation matrix, with unitary diagonal elements and off-diagonal correlation entries defined as $C_{d,l} = \frac{\sigma_{d,l}}{\sigma_d \sigma_l}$,
--   $S$ is a diagonal matrix $\sqrt{diag(\Sigma)}$, with dimensions' standard deviations $\sigma_d$ on the diagonal.
+-   $Z$ is a $N-$dimensional vector of latent clustering assignments such that $z_n \in {1,…,K}$.
 
-Therefore, the learned parameters are:
+### Latent parameters
 
--   the $K ✕ D$ matrix of means $\mu$,
--   the $K ✕ D$ matrix or variances $\sigma$,
--   $K$ $D ✕ D$ correlation matrices $C$,
--   the $K-$dimensional vector of mixing proportions $\pi$,
+-   $\pi_k$ are called *mixing coefficients* and are positive values such that $\sum_{k=1}^K \pi_k = 1$.
 
-and each observation is assigned to the cluster maximising the posterior $$
-p(k|x_i) = \frac{\pi_k\mathcal{N}(x_i|k)}{\sum_{l=1}^K \pi_l \mathcal{N}(x_i|l)}.
+    They corresponds to the pior probability for $Z$, such that $p(z_n=k)=\pi_k$.
+
+-   The model estimates the full covariance matrix, to infer also the correlation among dimensions, and it is decomposed as $\Sigma = SCS$:
+
+    -   $C$ is the correlation matrix, with unitary diagonal elements and off-diagonal correlation entries defined as $C_{d,l} = \frac{\sigma_{d,l}}{\sigma_d \sigma_l}$,
+
+    -   $S$ is a diagonal matrix $\sqrt{diag(\Sigma)}$, with dimensions' standard deviations $\sigma_d$ on the diagonal.
+
+Therefore, the **learned parameters** are:
+
+-   $K ✕ D$ matrix of means $\mu$,
+
+-   $K ✕ D$ matrix or variances $\sigma$,
+
+    $K$ $D ✕ D$ correlation matrices $C$,
+
+-   $K-$dimensional vector of mixing proportions $\pi$,
+
+and each observation is assigned to the cluster maximising the probability$$
+p(z_i=k|x_i) = \frac{\pi_k\mathcal{N}(x_i|k)}{\sum_{l=1}^K \pi_l \mathcal{N}(x_i|l)}.
 $$
+
+### Experimental validation dataset to model variances
 
 Eventually, to avoid an overestimation of the variances, we used the experimental validation dataset to fit a linear model of the variance as a function of the mean coverage. Then, the variances for each component, timepoint and lineage will be constrained to be smaller than the linear model in the estimated mean coverage.
-
-## Prior distributions
-
-The latent variables and parameters of the model are $Z, \pi, \mu, \sigma$ and $C$:
-
--   $\pi \sim Dirichlet(\alpha) \rightarrow$ vector of latent mixing proportions $\pi$ is distributed as a Dirichlet (since it has to sum up to 1). All clusters are a priori assumed to have equal probability, hence $\alpha_k=1/K$.
-
--   $Z \sim Categorical(\pi) \rightarrow$ latent assignments vector $Z$ is distributed as a Categorical with concentration parameter $\pi$.
-
--   $p(\mu_{k,d}) \sim Normal(\mu^{mean}, \sigma^{mean}) \rightarrow$ the means prior is a Normal, with hyperparameters $\mu^{mean}, \sigma^{mean}$. By default, since we do no know a priori the range of coverage values, the hyperparameters values are set to the sample mean and standard deviations.
-
--   $p(\sigma_{k,d}) \sim Normal(\mu^{sigma}, \sigma^{sigma}) \rightarrow$ the variances prior are set as a Normal, constrained to assume only positive values, with hyperparameters $\mu^{sigma}, \sigma^{sigma}$. The values of the hyperparameters have been tuned using an experimental validation dataset to explore the true variability we are likely to observe in these experiments and are set to 120 and 130, respectively.
-
--   $p(C_{k}) \sim LKJ(\eta) \rightarrow$ the correlations prior is the Lewandowski-Kurowicka-Joe (LKJ) distribution, set with default hyperparameter $\eta=1$, assuming a uniform density over all correlation matrix, since we are not aware a priori of strong or weak correlations among dimensions.
-
-## Model selection
-
-In order to select for the optimal number of clusters $K$, we computed the BIC as $BIC = -2\text{log}(\mathcal{L}) + \text{log}(N)*n_{par}$ over a range of number of clusters and selected the input $K$ resulting in the lowest BIC.
-
-# Stochastic Variational Inference (SVI) {#stochastic-variational-inference-svi}
-
-Given our models we want to learn values for the parameters $W = (Z,\mu,\sigma,C)$. The aim is to learn the posterior distribution of the latent parameters $$
-p(W|X) = \frac{p(X|W)p(W)}{p(X)}.
-$$ Ideally, we would like to find the set of parameters such as to maximise the log evidence, usually unfeasible to compute: $$
-W^* = \text{argmax}_W \text{log}(p(X))
-$$
-
-The idea behind VI is to find a *variational distribution* $q(W)$ to approximate the true posterior $p(W|X)$. The task is an optimization problem, aiming at finding the distribution as to minimize the KL divergence between the variational and true posteriors: $$
-q^*(W) = \text{argmin}_{q(W)\in\mathcal{Q}} KL[q(W)||p(W|X)].
-$$
-
-We can riformulate the KL as $$
-KL[q(W)||p(W|X)] = \text{log}(p(X)) - \text{ELBO}
-$$
-
-$$
-\text{ELBO} = \text{E}[\text{log}(p(X,W))] - \text{E}[\text{log}(q(W))]
-$$ and $\text{ELBO} \leq \text{log}(p(X))$
-
-The Evidence Lower Bound (ELBO) is a lower bound for the log evidence $p(X)$ and equals the log evidence when the variational distribution equals the true posterior (and $KL=0$).
-
-Therefore, we can reformulate the problem of minimizing the KL divergence as to maximising the ELBO (or minising the negative ELBO).
-
-This is done by taking gradient steps in both $p$ and $q$ parameter spaces simultaneously as to minimise the negative ELBO.
-
-## Pyro implementation
-
-In `Pyro` probabilistic programming language, this is carried out by defining two functions: a *model*, defining the generative model, and a *guide*, defining the variational distribution.
-
-```{python}
-def model(self):
-    # n of data points and of clusters
-    N, K = self._N, self.K
-
-    # mixing proportions
-    weights = pyro.sample("weights", distr.Dirichlet(torch.ones(K))) 
-    
-    # hyperparameters
-    mean_scale = self.hyperparameters["mean_scale"]
-    mean_loc = self.hyperparameters["mean_loc"]
-    var_loc = self.hyperparameters["var_loc"]
-    var_scale = self.hyperparameters["var_scale"]
-    eta = self.hyperparameters["eta"]
-    var_constr = self.init_params["var_constr"]
-
-    with pyro.plate("time_plate", self._T):
-        with pyro.plate("comp_plate", K):
-            mean = pyro.sample("mean", distr.Normal(mean_loc, mean_scale))
-
-    with pyro.plate("time_plate2", self._T):
-        with pyro.plate("comp_plate3", K):
-            variant_constr = pyro.sample("var_constr", distr.Delta(var_constr))
-            sigma_vector = pyro.sample("sigma_vector", distr.Normal(var_loc, var_scale))
-
-    if self.cov_type == "diag" or self._T == 1:
-        sigma_chol = torch.eye(self._T) * 1.
-    if self.cov_type == "full" and self._T > 1:
-        with pyro.plate("comp_plate2", K):
-            sigma_chol = pyro.sample("sigma_chol", distr.LKJCholesky(self._T, eta))
-
-    Sigma = self.compute_Sigma(sigma_chol, sigma_vector, K)
-
-    with pyro.plate("data_plate", N):
-        z = pyro.sample("z", distr.Categorical(weights), infer={"enumerate":"parallel"})
-        x = pyro.sample("obs", distr.MultivariateNormal(loc=mean[z], \
-            scale_tril=Sigma[z]), obs=self.dataset)
-```
-
-```{python}
-def guide():
-    params = self._initialize_params()
-    N, K = params["N"], params["K"]
-    min_var = self.hyperparameters["min_var"]
-
-    weights_param = pyro.param("weights_param", lambda: params["weights"], \
-        constraint=constraints.simplex)
-    mean_param = pyro.param("mean_param", lambda: params["mean"], \
-        constraint=constraints.positive)
-
-    if self.cov_type=="full" and self._T > 1:
-        with pyro.plate("comp_plate2", K):
-            sigma_chol_param = pyro.param("sigma_chol_param", lambda: params["sigma_chol"], \
-                constraint=constraints.corr_cholesky)
-            sigma_chol = pyro.sample("sigma_chol", distr.Delta(sigma_chol_param).to_event(2))
-    
-    elif self.cov_type=="diag" or self._T == 1:
-        sigma_chol_param = pyro.param("sigma_chol_param", lambda: params["sigma_chol"])
-    
-    # to_event(1) makes the elements sampled independently
-    weights = pyro.sample("weights", distr.Delta(weights_param).to_event(1))
-    with pyro.plate("time_plate", self._T):
-        with pyro.plate("comp_plate", K):
-            mean = pyro.sample("mean", distr.Delta(mean_param))
-
-    with pyro.plate("time_plate2", self._T):
-        with pyro.plate("comp_plate3", K):
-            variant_constr = pyro.sample(f"var_constr", distr.Delta(params["var_constr"]))
-            sigma_vector_param = pyro.param(f"sigma_vector_param", lambda: params["sigma_vector"], 
-                constraint=constraints.interval(min_var, variant_constr))
-            sigma_vector = pyro.sample(f"sigma_vector", distr.Delta(sigma_vector_param))
-
-    with pyro.plate("data_plate", N):
-        z = pyro.sample("z", distr.Categorical(weights), \
-            infer={"enumerate":self._enumer})
-
-```
-
-# Results
-
-## Murine data {#data-1}
-
-Let's have a look at the distribution of the data at hand.
-
-```{r echo=FALSE, fig.height=5, fig.width=9}
-data %>% 
-  filter_dataset() %>% 
-  ggplot() +
-  geom_histogram(aes(x=coverage), bins=60) +
-  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage")
-
-```
-
-```{r eval=FALSE, include=FALSE}
-# x = lineaGT::fit(data %>%
-#                    lineaGT::filter_dataset(min_cov=5),
-#                  infer_growth=F,
-#                  steps=100,
-#                  covariance="full",
-#                  seed_optim=T,
-#                  timepoints_to_int=list("early"=60, "mid"=140, "late"=280),
-#                  store_grads=T,
-#                  store_losses=T)
-# saveRDS(x, "./x.Rds")
-```
-
-```{r}
-x = readRDS("./x.Rds")
-```
-
-We can inspect the values of ELBO and norms of learned parameters' gradients to check for model convergence.
-
-First we check if for all the input $K$ the model converged. Each line corresponds to a different input number of clusters.
-
-Also, the actual number of iterations vary among $k$ since the model also checks for convergence at each step, looking at the degree to which the parameters vary in two consecutive steps.
-
-Since we want to minimize the loss, we can inspect the decreasing over iterations of the negative ELBO.
-
-```{r echo=FALSE, fig.height=6, fig.width=8}
-plot_losses(x, train = T)
-```
-
-```{r echo=FALSE, fig.height=6, fig.width=8}
-plot_gradient_norms(x)
-```
-
-We can inspect the Information Criteria varying the input number of clusters $K$.
-
-They are computed as follows
-
--   $BIC = -2\text{log}\mathcal{L} + \text{log}N*n\_params$
--   $AIC = -2\text{log}\mathcal{L} + 2n\_params$
--   $ICL = BIC - \sum_{n=1}^N p(z_i)\text{log}(p(z_i))$
-
-```{r echo=FALSE, fig.height=6, fig.width=8}
-plot_IC(x) 
-```
-
-Eventually, we can inspect the clustering of our data and the estimated parameters.
-
-We can visualize the observations colored by assigned cluster, across lineages and timepoints.
-
-```{r echo=FALSE, fig.height=5, fig.width=9}
-x$cov.dataframe %>%   
-  ggplot() +
-  geom_histogram(aes(x=coverage, fill=labels), bins=100, position="identity", alpha=.6) +
-  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage") +
-  labs(fill="Clusters") + scale_fill_manual(values=x$color.palette)
-```
-
-We also can visualize the density of each component and dimension as estimated by the model, overlayed on the observations.
-
-Here, we see that generally, the model is able to estimated the correct mean $\mu$ and standard deviations $\sigma$, since the observed ISs are represented by the densities.
-
-```{r echo=FALSE, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
-plot_marginal(x)
-```
-
-The estimated mean of each cluster corresponds to an estimate of the number of cells carrying the clusters' ISs. Thus, we can visualize how the mean parameter of each clone varies across lineages and timepoints to assess the expansion of the identified clone.
-
-```{r fig.height=3, fig.width=7, warning=FALSE}
-plot_mullerplot(x)
-```
-
-We can also visualize the 2D scatterplot to inspect the estimated full covariance matrices.
-
-```{r echo=FALSE}
-scatterplots = x %>% plot_scatter_density(highlight="C2")
-```
-
-```{r echo=FALSE, fig.height=3, fig.width=9}
-p1 = scatterplots$`cov.early.Myeloid:cov.mid.Myeloid`
-p2 = scatterplots$`cov.early.Myeloid:cov.late.Myeloid`
-p3 = scatterplots$`cov.late.Myeloid:cov.mid.Myeloid`
-
-patchwork::wrap_plots(p1, p2, p3, ncol=3)
-```
-
-## Experimental validation dataset
 
 ```{r warning=FALSE, include=FALSE}
 cloneA = c("UTP15(+)_chr5:72866480(-)")
@@ -449,12 +223,13 @@ cloneD = c("SUPT3H(-)_chr6:45172433(+)",
 
 mixIS = list(A=cloneA,B=cloneB,C=cloneC,D=cloneD) %>%
   reshape2::melt(value.name="IS") %>% dplyr::rename(cloneID=L1)
+
+data.val = readRDS("./data.val.Rds")
 ```
 
-```{r}
-data.val = readRDS("./data.val.Rds")
-data.val %>% head()
-mixIS %>% head()  # true clones
+```{r echo=FALSE}
+# data.val %>% head() %>% knitr::kable()
+mixIS %>% head() %>% knitr::kable()  # true clones
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -519,4 +294,223 @@ regr_df %>%
   ylab("Estimated variance") + xlab("Mean coverage") +
   labs(title="Linear regression of variances varying the mean coverage")
 
+```
+
+## Prior distributions
+
+The latent variables and parameters of the model are $Z, \pi, \mu, \sigma$ and $C$:
+
+-   $\pi \sim Dirichlet(\alpha) \rightarrow$ all clusters are a priori assumed to have equal probability, hence $\alpha_k=1/K$.
+
+-   $Z \sim Categorical(\pi) \rightarrow$ Categorical with concentration parameter $\pi$.
+
+-   $p(\mu_{k,d}) \sim Normal(\mu^{mean}, \sigma^{mean}) \rightarrow$ Normal constrained to assume positive values with hyperparameters $\mu^{mean}, \sigma^{mean}$.
+
+    By default, since we do no know a priori the range of coverage values, the hyperparameters values are set to the coverage mid-point and standard deviations.
+
+-   $p(\sigma_{k,d}) \sim Normal(\mu^{var}, \sigma^{var}) \rightarrow$ Normal constrained to assume positive values with hyperparameters $\mu^{var}, \sigma^{var}$.
+
+    The values of the hyperparameters have been tuned using an experimental validation dataset to explore the true variability we are likely to observe in these experiments and are set to 120 and 130, respectively.
+
+-   $p(C_{k}) \sim LKJ(\eta) \rightarrow$ Lewandowski-Kurowicka-Joe (LKJ) distribution, set with default hyperparameter $\eta=1$, assuming a uniform density over all correlation matrix, since we are not aware a priori of strong or weak correlations among dimensions.
+
+# Stochastic Variational Inference (SVI) {#stochastic-variational-inference-svi}
+
+Given our models we want to learn values for the parameters $W = (Z,\mu,\sigma,C)$. The aim is to learn the posterior distribution of the latent parameters $$
+p(W|X) = \frac{p(X|W)p(W)}{p(X)}.
+$$ Ideally, we would like to find the set of parameters such as to maximise the log evidence, usually unfeasible to compute: $$
+W^* = \text{argmax}_W \text{log}(p(X))
+$$
+
+The idea behind VI is to find a *variational distribution* $q(W)$ to approximate the true posterior $p(W|X)$. The task is an optimization problem, aiming at finding the distribution as to minimize the KL divergence between the variational and true posteriors: $$
+q^*(W) = \text{argmin}_{q(W)\in\mathcal{Q}} KL[q(W)||p(W|X)].
+$$
+
+We can riformulate the KL as $$
+KL[q(W)||p(W|X)] = \text{log}(p(X)) - \text{ELBO}
+$$
+
+$$
+\text{ELBO} = \text{E}[\text{log}(p(X,W))] - \text{E}[\text{log}(q(W))]
+$$
+
+$$
+\text{ELBO} \leq \text{log}(p(X)) 
+$$
+
+The Evidence Lower Bound (ELBO) is a **lower bound for the log evidence** $p(X)$ and equals the log evidence when the variational distribution equals the true posterior (and $KL=0$).
+
+Therefore, **minimizing the KL divergence** is the same as **maximising the ELBO** (or minising the negative ELBO).
+
+This is done by taking gradient steps in both $p$ and $q$ parameter spaces simultaneously as to minimise the negative ELBO.
+
+## Pyro implementation
+
+In `Pyro` probabilistic programming language, this is carried out by defining two functions: a *model*, defining the generative model, and a *guide*, defining the variational distribution.
+
+```{python}
+def model(self):
+    # n of data points and of clusters
+    N, K = self._N, self.K
+
+    # mixing proportions
+    weights = pyro.sample("weights", distr.Dirichlet(torch.ones(K))) 
+
+    with pyro.plate("time_plate", self._T):
+        with pyro.plate("comp_plate", K):
+            mean = pyro.sample("mean", distr.Normal(mean_loc, mean_scale))
+
+    with pyro.plate("time_plate2", self._T):
+        with pyro.plate("comp_plate3", K):
+            variant_constr = pyro.sample("var_constr", distr.Delta(var_constr))
+            sigma_vector = pyro.sample("sigma_vector", distr.Normal(var_loc, var_scale))
+
+    with pyro.plate("comp_plate2", K):
+        sigma_chol = pyro.sample("sigma_chol", distr.LKJCholesky(self._T, eta))
+
+    Sigma = self.compute_Sigma(sigma_chol, sigma_vector, K)
+
+    with pyro.plate("data_plate", N):
+        z = pyro.sample("z", distr.Categorical(weights), infer={"enumerate":"parallel"})
+        x = pyro.sample("obs", distr.MultivariateNormal(loc=mean[z], \
+            scale_tril=Sigma[z]), obs=self.dataset)
+```
+
+```{python}
+def guide():
+    params = self._initialize_params()
+    N, K = params["N"], params["K"]
+
+    weights_param = pyro.param("weights_param", lambda: params["weights"], \
+        constraint=constraints.simplex)
+    mean_param = pyro.param("mean_param", lambda: params["mean"], \
+        constraint=constraints.positive)
+
+    with pyro.plate("comp_plate2", K):
+        sigma_chol_param = pyro.param("sigma_chol_param", lambda: params["sigma_chol"], \
+            constraint=constraints.corr_cholesky)
+        sigma_chol = pyro.sample("sigma_chol", distr.Delta(sigma_chol_param).to_event(2))
+    
+    weights = pyro.sample("weights", distr.Delta(weights_param).to_event(1))
+    with pyro.plate("time_plate", self._T):
+        with pyro.plate("comp_plate", K):
+            mean = pyro.sample("mean", distr.Delta(mean_param))
+
+    with pyro.plate("time_plate2", self._T):
+        with pyro.plate("comp_plate3", K):
+            variant_constr = pyro.sample(f"var_constr", distr.Delta(params["var_constr"]))
+            sigma_vector_param = pyro.param(f"sigma_vector_param", lambda: params["sigma_vector"], 
+                constraint=constraints.interval(min_var, variant_constr))
+            sigma_vector = pyro.sample(f"sigma_vector", distr.Delta(sigma_vector_param))
+
+    with pyro.plate("data_plate", N):
+        z = pyro.sample("z", distr.Categorical(weights), \
+            infer={"enumerate":self._enumer})
+
+```
+
+# Results
+
+## Murine data {#data-1}
+
+Let's have a look at the distribution of the data at hand.
+
+```{r echo=FALSE, fig.height=5, fig.width=9}
+data %>% 
+  filter_dataset() %>% 
+  ggplot() +
+  geom_histogram(aes(x=coverage), bins=60) +
+  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage")
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# x = lineaGT::fit(data %>%
+#                    lineaGT::filter_dataset(min_cov=5),
+#                  infer_growth=F,
+#                  steps=100,
+#                  covariance="full",
+#                  seed_optim=T,
+#                  timepoints_to_int=list("early"=60, "mid"=140, "late"=280),
+#                  store_grads=T,
+#                  store_losses=T)
+# saveRDS(x, "./x.Rds")
+```
+
+```{r include=FALSE}
+x = readRDS("./x.Rds")
+```
+
+### Checking convergence
+
+We can inspect the values of ELBO and norms of learned parameters' gradients to check for model convergence.
+
+First we check if for all the input $K$ the model converged. Each line corresponds to a different input number of clusters.
+
+Also, the actual number of iterations vary among $k$ since the model also checks for convergence at each step, looking at the degree to which the parameters vary in two consecutive steps.
+
+Since we want to minimize the loss, we can inspect the decreasing over iterations of the negative ELBO.
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+losses = plot_losses(x, train = T)
+grads = plot_gradient_norms(x)
+design = "AAABBB
+          AAABBB
+          ###BBB
+          ###BBB"
+patchwork::wrap_plots(losses, grads, design = design)
+```
+
+We can inspect the Information Criteria varying the input number of clusters $K$.
+
+They are computed as follows
+
+-   $BIC = -2\text{log}\mathcal{L} + \text{log}N*n\_params$
+-   $AIC = -2\text{log}\mathcal{L} + 2n\_params$
+-   $ICL = BIC - \sum_{n=1}^N p(z_i)\text{log}(p(z_i))$
+
+```{r echo=FALSE, fig.height=6, fig.width=8}
+plot_IC(x) 
+```
+
+### Evaluating clustering
+
+Eventually, we can inspect the clustering of our data and the estimated parameters.
+
+We can visualize the observations colored by assigned cluster, across lineages and timepoints.
+
+```{r echo=FALSE, fig.height=5, fig.width=9}
+x$cov.dataframe %>%   
+  ggplot() +
+  geom_histogram(aes(x=coverage, fill=labels), bins=100, position="identity", alpha=.6) +
+  facet_grid(timepoints~lineage, scales="free_y") + lineaGT:::my_ggplot_theme() + ylab("") + xlab("Coverage") +
+  labs(fill="Clusters") + scale_fill_manual(values=x$color.palette)
+```
+
+We also can visualize the density of each component and dimension as estimated by the model, overlayed on the observations.
+
+Here, we see that generally, the model is able to estimated the correct mean $\mu$ and standard deviations $\sigma$, since the observed ISs are represented by the densities.
+
+```{r echo=FALSE, fig.height=5, fig.width=9, message=FALSE, warning=FALSE}
+plot_marginal(x)
+```
+
+The estimated mean of each cluster corresponds to an estimate of the number of cells carrying the clusters' ISs. Thus, we can visualize how the mean parameter of each clone varies across lineages and timepoints to assess the expansion of the identified clone.
+
+```{r fig.height=3, fig.width=7, warning=FALSE}
+plot_mullerplot(x)
+```
+
+We can also visualize the 2D scatterplot to inspect the estimated full covariance matrices.
+
+```{r echo=FALSE}
+scatterplots = x %>% plot_scatter_density(highlight="C1")
+```
+
+```{r echo=FALSE, fig.height=3, fig.width=9}
+p1 = scatterplots$`cov.early.Myeloid:cov.mid.Myeloid`
+p2 = scatterplots$`cov.early.Myeloid:cov.late.Myeloid`
+p3 = scatterplots$`cov.late.Myeloid:cov.mid.Myeloid`
+
+patchwork::wrap_plots(p1, p2, p3, ncol=3)
 ```
